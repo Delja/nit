@@ -23,6 +23,8 @@ private import parser::tables
 import mixin
 import primitive_types
 private import model::serialize_model
+import ordered_tree
+import highlight
 
 redef class ToolContext
 	# --discover-call-trace
@@ -501,6 +503,7 @@ class NaiveInterpreter
 	# The call is direct/static. There is no message-sending/late-binding.
 	fun call(mpropdef: MMethodDef, args: Array[Instance]): nullable Instance
 	do
+		step_execution(args.first)
 		if self.modelbuilder.toolcontext.opt_discover_call_trace.value and not self.discover_call_trace.has(mpropdef) then
 			self.discover_call_trace.add mpropdef
 			self.debug("Discovered {mpropdef}")
@@ -686,7 +689,110 @@ class NaiveInterpreter
 	# Placebo instance used to mark internal error result when `null` already have a meaning.
 	# TODO: replace with multiple return or something better
 	var error_instance = new MutableInstance(modelbuilder.model.null_type) is lazy
+
+	# This HashMap is used to store the inspected objects
+	var object_watch_list = new HashMap[Instance,OrderedTree[ObjectInspected]]
+
+	# The deep of the frames
+	# This information is stored to check if the step-into mode is returned to the call method
+	var deep_old_frame = 0
+
+	# The all receiver
+	# This information is stored to refresh the watch list
+	var old_recv: nullable Instance
+
+	# The object provide the inspector object method
+	var object_inspector = new ObjectInspector
+
+	# This flag is used to launch setp by step interpreter
+	var debug_flag = false
+
+	fun add_object_watch_list(instance: Instance)do
+		object_watch_list[instance] = object_inspector.inspect_object(instance,new OrderedTree[ObjectInspected],new ObjectInspected(instance,""),new List[Instance])
+		deep_old_frame = frames.length
+		self.debug_flag = true
+		object_watch_list[instance].write_to(stdout)
+	end
+
+	# Print the commands to execute step-by-step execution
+	fun print_instruction_debug do
+		print "────────────────────────────────────────────────────────────────────"
+		print "∣You enter in the step-by-step mode"
+		print "∣Enter " + "'in'".yellow  + " to do a step-into"
+		print "∣Press " + "'enter'".yellow  + " to do a step-over"
+		print "∣Enter something else to exit the step-by-step mode"
+		print "────────────────────────────────────────────────────────────────────"
+	end
+
+	# The previous frame
+	# The node is stored to execute the step-by-step
+	var previous_frame : nullable FRAME
+
+	private fun compute_first_old_frame do
+		if frames.length > deep_old_frame then
+			previous_frame = frames[deep_old_frame-1]
+		else
+			previous_frame = frames.last
+		end
+	end
+
+	# Init step-by-step mode
+	fun init_debug_mode do
+		if previous_frame == null then
+			compute_first_old_frame
+			print_instruction_debug
+		end
+	end
+
+	private var debug_enter_user = ""
+
+	# Main function of the step-by-step execution this method is called after each instruction
+	fun step_execution(recv : Instance) do
+		if self.debug_flag then
+			init_debug_mode
+			if debug_enter_user == "" then
+				self.step_over
+			else if debug_enter_user == "in" then
+				deep_old_frame = frames.length
+				self.step_into
+			else
+				self.debug_flag = false
+			end
+		end
+		self.old_recv = recv
+	end
+
+	# Return the colored line of the current node
+	fun get_color_line: String
+	do
+		var highlight = new AnsiHighlightVisitor
+		var node = current_node
+		if node != null then
+			highlight.include_whole_lines = true
+			highlight.first_line = node.hot_location.line_start
+			highlight.last_line = node.hot_location.line_start
+			highlight.highlight_node(node)
+			return "{node.hot_location.line_start}|{highlight.result.write_to_string.replace("\t","")}"
+		end
+		return ""
+	end
+
+	fun step_into do
+		print "{self.get_color_line}"
+		previous_frame = new_frame(frame.current_node,frame.mpropdef,frame.arguments)
+		previous_frame.as(InterpreterFrame).map = frame.as(InterpreterFrame).map
+		debug_enter_user = stdin.read_line
+	end
+
+	fun step_over do
+		# Check if the new instruction is in the same method or the new instruction is in the appellant method 
+		# Check the line to execute all instruction line
+		if previous_frame.mpropdef == frame.mpropdef or frames.length < deep_old_frame and previous_frame.current_node.location.line_start != frame.current_node.location.line_start then
+			self.step_into
+		end
+	end
 end
+
 
 # Represents the inspected object with the relationship between the instance and the name of the object (if it exists)
 class ObjectInspected
@@ -1027,6 +1133,10 @@ redef class AMethPropdef
 			else
 				return v.int_instance(recv.object_id)
 			end
+		else if pname == "inspect_o" then
+			var recv = args.first
+			v.add_object_watch_list(recv)
+			return null
 		else if pname == "output_class_name" then
 			var recv = args.first
 			print recv.mtype
@@ -1682,7 +1792,6 @@ redef class AExpr
 	do
 		expr(v)
 	end
-
 end
 
 redef class ABlockExpr
@@ -1714,6 +1823,7 @@ redef class AVardeclExpr
 			var i = v.expr(ne)
 			if i == null then return null
 			v.write_variable(self.variable.as(not null), i)
+			v.step_execution(i)
 			return i
 		end
 		return null
@@ -1732,6 +1842,7 @@ redef class AVarAssignExpr
 	do
 		var i = v.expr(self.n_value)
 		if i == null then return null
+		v.step_execution(i)
 		v.write_variable(self.variable.as(not null), i)
 		return i
 	end
