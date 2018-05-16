@@ -761,6 +761,9 @@ class NaiveInterpreter
 		print "∣You enter in the step-by-step mode"
 		print "∣Enter " + "'in'".yellow  + " to do a step-into"
 		print "∣Press " + "'enter'".yellow  + " to do a step-over"
+		print "∣Enter " + "'all'".yellow  + " to print the locals variables"
+		print "∣Enter " + "'watch'".yellow  + " to print the watch list variables"
+		print "∣Enter " + "'next'".yellow  + " to execute the code until the next breakpoint "
 		print "∣Enter something else to exit the step-by-step mode"
 		print "────────────────────────────────────────────────────────────────────"
 	end
@@ -797,11 +800,35 @@ class NaiveInterpreter
 			else if debug_enter_user == "in" then
 				deep_old_frame = frames.length
 				self.step_into
+			else if debug_enter_user == "all" then
+				self.print_all_frame_value
+				debug_enter_user = stdin.read_line
+				step_execution(recv)
+			else if debug_enter_user == "watch" then
+				self.print_watch_list_value
+				debug_enter_user = stdin.read_line
+				step_execution(recv)
+			else if debug_enter_user == "next" then
+				self.debug_enter_user = ""
+				self.debug_flag = false
 			else
 				self.debug_flag = false
 			end
 		end
 		self.old_recv = recv
+	end
+
+	fun print_all_frame_value do
+		for variable, instance in previous_frame.as(InterpreterFrame).map do
+			var tree = object_inspector.inspect_object(instance,new OrderedTree[ObjectInspected],new ObjectInspected(instance,variable.name),new List[Instance])
+			print_inspected_element(tree)
+		end
+	end
+
+	fun print_watch_list_value do
+		for instance , tree in object_watch_list do
+			print_inspected_element(tree)
+		end
 	end
 
 	# Return the colored line of the current node
