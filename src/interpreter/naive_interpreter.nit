@@ -443,6 +443,16 @@ class NaiveInterpreter
 		f.map[v] = value
 	end
 
+	# Retrieve the variable of the Instance in the current frame
+	fun read_instance(i: Instance): nullable Variable
+	do
+		var f = frames.first.as(InterpreterFrame)
+		for key, value in f.map do
+			if value == i then return key
+		end
+		return null
+	end
+
 	# Store known methods, used to trace methods as they are reached
 	var discover_call_trace: Set[MMethodDef] = new HashSet[MMethodDef]
 
@@ -707,11 +717,42 @@ class NaiveInterpreter
 	# This flag is used to launch setp by step interpreter
 	var debug_flag = false
 
+	fun print_inspected_element(tree : OrderedTree[ObjectInspected]) do
+		print "────────────────────────────────────────────────────────────────────"
+		tree.write_to(stdout)
+		print "────────────────────────────────────────────────────────────────────"
+	end
+
+	fun refrech_object_watch_list do
+		var old = old_recv
+		if old != null then
+			for instance, tree in object_watch_list do
+				# Check if the old receiver is in the watch list
+				if old_recv.eq_is(instance) then
+					# get the associated variable if any
+					var variable = read_instance(old)
+					var update = new OrderedTree[ObjectInspected]
+					if variable != null then
+						update = object_inspector.inspect_object(old,new OrderedTree[ObjectInspected],new ObjectInspected(old,variable.name),new List[Instance])
+						if update.to_s != self.object_watch_list[old].to_s then
+							self.object_watch_list[old] = update
+							print_inspected_element(update)
+						end
+					else
+						update = object_inspector.inspect_object(old,new OrderedTree[ObjectInspected],new ObjectInspected(old,"Return value"),new List[Instance])
+						self.object_watch_list.keys.remove(instance)
+						self.object_watch_list.values.remove(tree)
+						print_inspected_element(update)
+					end
+				end
+			end
+		end
+	end
+
 	fun add_object_watch_list(instance: Instance)do
 		object_watch_list[instance] = object_inspector.inspect_object(instance,new OrderedTree[ObjectInspected],new ObjectInspected(instance,""),new List[Instance])
 		deep_old_frame = frames.length
 		self.debug_flag = true
-		object_watch_list[instance].write_to(stdout)
 	end
 
 	# Print the commands to execute step-by-step execution
@@ -750,6 +791,7 @@ class NaiveInterpreter
 	fun step_execution(recv : Instance) do
 		if self.debug_flag then
 			init_debug_mode
+			refrech_object_watch_list
 			if debug_enter_user == "" then
 				self.step_over
 			else if debug_enter_user == "in" then
