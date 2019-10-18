@@ -48,6 +48,10 @@ private class TypeVisitor
 	# The analyzed property
 	var mpropdef: MPropDef
 
+	# Is warnings are disabled ?
+	# By default the value is false to enable all warning for typing.
+	var disable_warning = false is optional, writable
+
 	var selfvariable = new Variable("self")
 
 	# Is `self` use restricted?
@@ -191,9 +195,9 @@ private class TypeVisitor
 		if sup == null then return null # Forward error
 
 		if sup == sub then
-			self.modelbuilder.warning(node, "useless-type-test", "Warning: expression is already a `{sup}`.")
+			if not disable_warning then self.modelbuilder.warning(node, "useless-type-test", "Warning: expression is already a `{sup}`.")
 		else if self.is_subtype(sub, sup) then
-			self.modelbuilder.warning(node, "useless-type-test", "Warning: expression is already a `{sup}` since it is a `{sub}`.")
+			if not disable_warning then self.modelbuilder.warning(node, "useless-type-test", "Warning: expression is already a `{sup}` since it is a `{sub}`.")
 		end
 		return sup
 	end
@@ -216,16 +220,16 @@ private class TypeVisitor
 	fun check_can_be_null(anode: ANode, mtype: MType): Bool
 	do
 		if mtype isa MNullType then
-			modelbuilder.warning(anode, "useless-null-test", "Warning: expression is always `null`.")
+			if not disable_warning then modelbuilder.warning(anode, "useless-null-test", "Warning: expression is always `null`.")
 			return true
 		end
 		if can_be_null(mtype) then return true
 
 		if mtype isa MFormalType then
 			var res = anchor_to(mtype)
-			modelbuilder.warning(anode, "useless-null-test", "Warning: expression is not null, since it is a `{mtype}: {res}`.")
+			if not disable_warning then modelbuilder.warning(anode, "useless-null-test", "Warning: expression is not null, since it is a `{mtype}: {res}`.")
 		else
-			modelbuilder.warning(anode, "useless-null-test", "Warning: expression is not null, since it is a `{mtype}`.")
+			if not disable_warning then modelbuilder.warning(anode, "useless-null-test", "Warning: expression is not null, since it is a `{mtype}`.")
 		end
 		return false
 	end
@@ -371,9 +375,9 @@ private class TypeVisitor
 		if info != null and self.mpropdef.mproperty.deprecation == null then
 			var mdoc = info.mdoc
 			if mdoc != null then
-				self.modelbuilder.warning(node, "deprecated-method", "Deprecation Warning: method `{mproperty.name}` is deprecated: {mdoc.content.first}")
+				if not disable_warning then self.modelbuilder.warning(node, "deprecated-method", "Deprecation Warning: method `{mproperty.name}` is deprecated: {mdoc.content.first}")
 			else
-				self.modelbuilder.warning(node, "deprecated-method", "Deprecation Warning: method `{mproperty.name}` is deprecated.")
+				if not disable_warning then self.modelbuilder.warning(node, "deprecated-method", "Deprecation Warning: method `{mproperty.name}` is deprecated.")
 			end
 		end
 
@@ -386,7 +390,7 @@ private class TypeVisitor
 		else if propdefs.length == 1 then
 			mpropdef = propdefs.first
 		else
-			self.modelbuilder.warning(node, "property-conflict", "Warning: conflicting property definitions for property `{mproperty.name}` in `{unsafe_type}`: {propdefs.join(" ")}")
+			if not disable_warning then self.modelbuilder.warning(node, "property-conflict", "Warning: conflicting property definitions for property `{mproperty.name}` in `{unsafe_type}`: {propdefs.join(" ")}")
 			mpropdef = mproperty.intro
 		end
 
@@ -873,7 +877,7 @@ end
 
 redef class APropdef
 	# The entry point of the whole typing analysis
-	fun do_typing(modelbuilder: ModelBuilder)
+	fun do_typing(modelbuilder: ModelBuilder, disable_warning: nullable Bool)
 	do
 	end
 
@@ -882,12 +886,16 @@ redef class APropdef
 end
 
 redef class AMethPropdef
-	redef fun do_typing(modelbuilder: ModelBuilder)
+	redef fun do_typing(modelbuilder: ModelBuilder, disable_warning: nullable Bool)
 	do
 		var mpropdef = self.mpropdef
 		if mpropdef == null then return # skip error
 
-		var v = new TypeVisitor(modelbuilder, mpropdef)
+		# Define if the warning are disabled
+		var warning = disable_warning
+		if warning == null then warning = false
+
+		var v = new TypeVisitor(modelbuilder, mpropdef, disable_warning = warning)
 		self.selfvariable = v.selfvariable
 
 		var mmethoddef = self.mpropdef.as(not null)
@@ -947,14 +955,18 @@ redef class ANode
 end
 
 redef class AAttrPropdef
-	redef fun do_typing(modelbuilder: ModelBuilder)
+	redef fun do_typing(modelbuilder: ModelBuilder, disable_warning: nullable Bool)
 	do
 		if not has_value then return
 
 		var mpropdef = self.mreadpropdef
 		if mpropdef == null or mpropdef.msignature == null then return # skip error
 
-		var v = new TypeVisitor(modelbuilder, mpropdef)
+		# Define if the warning are disabled
+		var warning = disable_warning
+		if warning == null then warning = false
+
+		var v = new TypeVisitor(modelbuilder, mpropdef, disable_warning = warning)
 		self.selfvariable = v.selfvariable
 
 		var nexpr = self.n_expr
