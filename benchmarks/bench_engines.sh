@@ -86,17 +86,28 @@ function usage()
 	echo "  -n count: number of execution for each bar (default: $count)"
 	echo "  --dry: Do not run the commands, just reuse the data and generate the graph"
 	echo "  --fast: Run less and faster tests"
-	echo "  -h: this help"
+	echo "  -h, --help: this help"
+	echo "	--bench: display a list of available benchmark(s)"
+}
+
+function available_bench
+{
+	benchs=`grep "^function bench" $0 | awk '{gsub("function","");}1'`
+	echo "List of available benchmark(s):"
+	for i in $benchs; do
+		echo "  $i"
+	done
 }
 
 stop=false
 while [ "$stop" = false ]; do
 	case "$1" in
 		-v) verbose=true; shift;;
-		-h) usage; exit;;
+		-h | --help) usage; exit;;
 		-n) count="$2"; shift; shift;;
 		--dry) dry_run=true; shift;;
 		--fast) fast=true$fast; shift;;
+		--bench) available_bench; exit;;
 		--html) shift;; # Deprecated
 		*) stop=true
 	esac
@@ -254,25 +265,116 @@ function bench_cc_nitc-e()
 }
 bench_cc_nitc-e
 
+#Bench the given command on the following programs "../examples/hello_world.nit ../src/test_parser.nit ../src/nitc.nit"
+#$1 command
+function bench_on_programs
+{
+	command="$1"
+	for i in ../examples/hello_world.nit ../src/test_parser.nit ../src/nitc.nit; do
+		bench_command `basename "$i" .nit` "" $command "$i"
+	done
+}
+
 function bench_compilation_time
 {
+	bench_command "./nitc --global --no-cc"
 	name="$FUNCNAME"
 	skip_test "$name" && return
+
 	prepare_res "$name-nitc-g.dat" "nitc-g" "nitc --global"
-	for i in ../examples/hello_world.nit ../src/test_parser.nit ../src/nitc.nit; do
-		bench_command `basename "$i" .nit` "" ./nitc --global "$i" --no-cc
-	done
+	bench_on_programs "./nitc --global --no-cc"
+
 	prepare_res "$name-nitc-s.dat" "nitc-s" "nitc --separate"
-	for i in ../examples/hello_world.nit ../src/test_parser.nit ../src/nitc.nit; do
-		bench_command `basename "$i" .nit` "" ./nitc --separate "$i" --no-cc
-	done
+	bench_on_programs "./nitc --separate --no-cc"
+
 	prepare_res "$name-nitc-e.dat" "nitc-e" "nitc --erasure"
-	for i in ../examples/hello_world.nit ../src/test_parser.nit ../src/nitc.nit; do
-		bench_command `basename "$i" .nit` "" ./nitc --erasure "$i" --no-cc
-	done
+	bench_on_programs "./nitc --erasure --no-cc"
+
 	plot "$name.gnu"
 }
 bench_compilation_time
+
+function bench_compilation_time_contract
+{
+	name="$FUNCNAME"
+	skip_test "$name" && return
+
+	# Test of each contract policy (no, default and full)
+	prepare_res "$name-nitc-no-contract.dat" "no-contract" "nitc --no-contract"
+	bench_on_programs "./nitc --no-cc --no-contract"
+
+	prepare_res "$name-nitc-default.dat" "default" "nitc"
+	bench_on_programs "./nitc --no-cc"
+
+	prepare_res "$name-nitc-full-contract.dat" "full-contract" "nitc --full-contract"
+	bench_on_programs "./nitc --no-cc --full-contract"
+
+	# Test of full and default contract policy with the true assertion (no real verification)
+	prepare_res "$name-nitc-true-contract.dat" "true-contract" "nitc --true-contract"
+	bench_on_programs "./nitc --no-cc --true-contract"
+
+	prepare_res "$name-nitc-full-true-contract.dat" "full-true-contract" "nitc --full-contract --true-contract"
+	bench_on_programs "./nitc --no-cc --full-contract --true-contract"
+
+	# Test of full and default contract policy with no body on contract method (no verification)
+	prepare_res "$name-nitc-default-call-contract.dat" "default-call-contract" "nitc --only-call-contract"
+	bench_on_programs "./nitc --no-cc --only-call-contract"
+
+	prepare_res "$name-nitc-full-call-contract.dat" "nitc-full-call-contract" "nitc --full-contract --only-call-contract"
+	bench_on_programs "./nitc --no-cc --full-contract --only-call-contract"
+
+	plot "$name.gnu" "set key outside"
+}
+bench_compilation_time_contract
+
+function bench_execution_time_contract
+{
+	name="$FUNCNAME"
+	skip_test "$name" && return
+
+	if [[ ! -e "tmp" ]]; then
+		mkdir tmp
+	fi
+
+	#Generation of each version of the compiler
+	./nitc --no-contract ../src/nitc.nit -o tmp/nitc_no_contract
+	./nitc --full-contract ../src/nitc.nit -o tmp/nitc_full_contract
+
+	./nitc --true-contract ../src/nitc.nit -o tmp/nitc_true_contract
+	./nitc --true-contract --full-contract ../src/nitc.nit -o tmp/nitc_full_true_contract
+
+	./nitc --only-call-contract ../src/nitc.nit -o tmp/nitc_call_contract
+	./nitc --full-contract --only-call-contract ../src/nitc.nit -o tmp/nitc_full_call_contract
+
+	# Test of each contract policy (no, default and full)
+	prepare_res "$name-nitc-no-contract.dat" "no-contract" "nitc\_no\_contract --no-cc"
+	bench_on_programs "./tmp/nitc_no_contract --no-cc ../src/nitc.nit"
+
+	prepare_res "$name-nitc-default.dat" "default" "nitc --no-cc"
+	bench_on_programs "./nitc --no-cc  --no-cc ../src/nitc.nit"
+
+	prepare_res "$name-nitc-full-contract.dat" "full-contract" "nitc\_full\_contract --no-cc"
+	bench_on_programs "./tmp/nitc_full_contract --no-cc ../src/nitc.nit"
+
+	# Test of full and default contract policy with the true assertion (no real verification)
+	prepare_res "$name-nitc-default-true-contract.dat" "default-true-contract" "nitc --no-cc"
+	bench_on_programs "./tmp/nitc_true_contract --no-cc ../src/nitc.nit"
+
+	prepare_res "$name-nitc-full-true-contract.dat" "full-true-contract" "nitc\_full\_contract --no-cc"
+	bench_on_programs "./tmp/nitc_full_true_contract --no-cc ../src/nitc.nit"
+
+	# Test of full and default contract policy with no body on contract method (no verification)
+	prepare_res "$name-nitc-only-call-contract.dat" "only-call-contract" "nitc\_call\_contract --no-cc"
+	bench_on_programs "./tmp/nitc_call_contract --no-cc ../src/nitc.nit"
+
+	prepare_res "$name-nitc-full-only-call-contract.dat" "full-only-call-contract" "nitc\_full\_call\_contract --no-cc"
+	bench_on_programs "./tmp/nitc_full_call_contract --no-cc ../src/nitc.nit"
+
+	plot "$name.gnu" "set key outside"
+
+	rm -rf tmp
+}
+bench_execution_time_contract
 
 echo >>"$html" "</body></html>"
 

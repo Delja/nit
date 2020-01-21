@@ -78,6 +78,7 @@ function prepare_res()
 
 # Plot the last $res as an histogram
 # $1: plot file (eg toto.gnu)
+# $2: potential plot option
 function plot()
 {
 	cat >"$1" <<END
@@ -92,6 +93,7 @@ set boxwidth 0.9;
 set xtic nomirror rotate by -45 scale 0 font ',8';
 set title "$1 ; avg. on $count-1 runs"
 set ylabel "time (s)"
+$2
 $plots
 END
 	plots=
